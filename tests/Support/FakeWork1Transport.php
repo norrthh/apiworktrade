@@ -2,19 +2,23 @@
 
 namespace Tests\Support;
 
+use App\Services\Work1\CabinetTransport;
 use App\Services\Work1\Work1Response;
 use App\Services\Work1\Work1Transport;
 
-final class FakeWork1Transport implements Work1Transport
+final class FakeWork1Transport implements Work1Transport, CabinetTransport
 {
     /** @var list<string> */
     public array $gets = [];
 
-    /** @var list<array{path:string, fields:array<string, scalar|null>, ajax:bool}> */
+    /** @var list<array{path:string, fields:array<string, scalar|list<scalar>|null>, ajax:bool}> */
     public array $posts = [];
 
     /** @var list<array{0:string, 1:Work1Response}> */
     public array $map = [];
+
+    /** @var list<array{0:string, 1:Work1Response}> */
+    public array $queue = [];
 
     public function ensure(): void {}
 
@@ -39,8 +43,22 @@ final class FakeWork1Transport implements Work1Transport
         $this->map[] = [$prefix, new Work1Response($status, $body, $location)];
     }
 
+    public function push(string $prefix, string $body, int $status = 200, ?string $location = null): void
+    {
+        $this->queue[] = [$prefix, new Work1Response($status, $body, $location)];
+    }
+
     private function match(string $path): Work1Response
     {
+        foreach ($this->queue as $index => [$prefix, $response]) {
+            if (str_starts_with($path, $prefix)) {
+                unset($this->queue[$index]);
+                $this->queue = array_values($this->queue);
+
+                return $response;
+            }
+        }
+
         foreach ($this->map as [$prefix, $response]) {
             if (str_starts_with($path, $prefix)) {
                 return $response;

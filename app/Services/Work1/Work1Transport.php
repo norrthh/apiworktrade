@@ -11,7 +11,7 @@ interface Work1Transport
     public function get(string $path): Work1Response;
 
     /**
-     * @param  array<string, scalar|null>  $fields
+     * @param  array<string, scalar|list<scalar>|null>  $fields
      */
     public function post(string $path, array $fields, bool $ajax = false): Work1Response;
 }

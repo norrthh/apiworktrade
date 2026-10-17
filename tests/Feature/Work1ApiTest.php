@@ -42,6 +42,34 @@ class Work1ApiTest extends TestCase
         ])->assertOk()->assertJsonPath('offer_id', 15);
     }
 
+    public function test_create_offer_accepts_a_method_slug_from_the_cabinet_form(): void
+    {
+        $this->mock(Work1Client::class, function ($mock) {
+            $mock->shouldReceive('createOffer')->once()->with('M_3RRVXQT1', 'EHOT', 'm2alfa')->andReturn([
+                'offer_id' => 500,
+                'merchant_code' => 'M_3RRVXQT1',
+                'method' => 'm2alfa',
+                'agent' => null,
+                'created' => true,
+            ]);
+        });
+
+        $this->withToken('test-token')->postJson('/api/offers', [
+            'merchant_code' => 'M_3RRVXQT1',
+            'merchant_name' => 'EHOT',
+            'method' => 'm2alfa',
+        ])->assertOk()->assertJsonPath('method', 'm2alfa');
+    }
+
+    public function test_create_offer_rejects_a_method_that_is_not_a_slug(): void
+    {
+        $this->withToken('test-token')->postJson('/api/offers', [
+            'merchant_code' => 'M_3RRVXQT1',
+            'merchant_name' => 'EHOT',
+            'method' => 'Alfa Bank',
+        ])->assertStatus(422);
+    }
+
     public function test_session_reports_mfa(): void
     {
         $this->mock(Work1Client::class, function ($mock) {
@@ -78,5 +106,32 @@ class Work1ApiTest extends TestCase
         $this->withToken('test-token')->postJson('/api/banks', [
             'values' => ['name' => 'Ipak Yuli'],
         ])->assertOk()->assertJsonPath('bank_id', 9);
+    }
+
+    public function test_create_method_requires_a_name_a_type_and_banks(): void
+    {
+        $this->postJson('/api/methods', [
+            'values' => ['name' => 'm2nozon', 'method_type' => 'tel', 'bank_ids' => '51'],
+        ])->assertUnauthorized();
+
+        $this->withToken('test-token')->postJson('/api/methods', [
+            'values' => ['name' => 'm2nozon'],
+        ])->assertStatus(422);
+
+        $this->mock(Work1Client::class, function ($mock) {
+            $mock->shouldReceive('createMethod')->once()->with([
+                'name' => 'm2nozon',
+                'method_type' => 'tel',
+                'bank_ids' => '51',
+            ])->andReturn([
+                'method_id' => 120,
+                'name' => 'm2nozon',
+                'created' => true,
+            ]);
+        });
+
+        $this->withToken('test-token')->postJson('/api/methods', [
+            'values' => ['name' => 'm2nozon', 'method_type' => 'tel', 'bank_ids' => '51'],
+        ])->assertCreated()->assertJsonPath('method_id', 120);
     }
 }

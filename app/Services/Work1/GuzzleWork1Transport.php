@@ -142,7 +142,7 @@ final class GuzzleWork1Transport implements Work1Transport
     }
 
     /**
-     * @param  array<string, scalar|null>  $fields
+     * @param  array<string, scalar|list<scalar>|null>  $fields
      */
     private function request(string $method, string $path, array $fields = [], bool $ajax = false): Work1Response
     {
@@ -168,7 +168,12 @@ final class GuzzleWork1Transport implements Work1Transport
             if ($ajax) {
                 $options['headers']['X-Requested-With'] = 'XMLHttpRequest';
             }
-            $options['form_params'] = $fields;
+            if ($this->hasList($fields)) {
+                $options['headers']['Content-Type'] = 'application/x-www-form-urlencoded';
+                $options['body'] = $this->encodeForm($fields);
+            } else {
+                $options['form_params'] = $fields;
+            }
         }
 
         try {
@@ -242,6 +247,43 @@ final class GuzzleWork1Transport implements Work1Transport
         $directory = preg_replace('#/[^/]*$#', '/', $base) ?: '/';
 
         return $directory.$location;
+    }
+
+    /**
+     * @param  array<string, scalar|list<scalar>|null>  $fields
+     */
+    private function hasList(array $fields): bool
+    {
+        foreach ($fields as $value) {
+            if (is_array($value)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Repeated keys for a multi-select: Methods[bank_ids][]=51&Methods[bank_ids][]=27.
+     *
+     * @param  array<string, scalar|list<scalar>|null>  $fields
+     */
+    private function encodeForm(array $fields): string
+    {
+        $pairs = [];
+        foreach ($fields as $key => $value) {
+            if (is_array($value)) {
+                $name = str_ends_with((string) $key, '[]') ? (string) $key : $key.'[]';
+                foreach ($value as $item) {
+                    $pairs[] = urlencode($name).'='.urlencode((string) $item);
+                }
+
+                continue;
+            }
+            $pairs[] = urlencode((string) $key).'='.urlencode((string) ($value ?? ''));
+        }
+
+        return implode('&', $pairs);
     }
 
     private function isLogin(Work1Response $response): bool

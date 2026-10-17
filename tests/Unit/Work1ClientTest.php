@@ -183,6 +183,83 @@ class Work1ClientTest extends TestCase
         $this->assertStringContainsString('28', $transport->gets[0]);
     }
 
+    public function test_create_method_posts_the_type_and_banks_and_skips_the_empty_default_bank(): void
+    {
+        $transport = new FakeWork1Transport;
+        $transport->respond('/admin/methods/index', <<<'HTML'
+            <table><thead><tr><th>Methods</th></tr></thead></table>
+        HTML);
+        $transport->respond('/admin/methods/create', <<<'HTML'
+            <form>
+                <input name="Methods[name]" value="">
+                <select name="Methods[method_type_id]">
+                    <option value="">Select</option>
+                    <option value="2">tel</option>
+                </select>
+                <select name="Methods[bank_ids][]" multiple>
+                    <option value="115">empty</option>
+                    <option value="51">ОЗОН Банк</option>
+                </select>
+                <input name="Methods[auto_commission]" value="0.00">
+            </form>
+        HTML, 302, '/admin/methods/update?id=120');
+        $transport->respond('/admin/methods/update', <<<'HTML'
+            <form>
+                <input name="Methods[name]" value="m2nozon">
+                <select name="Methods[method_type_id]">
+                    <option value="2" selected>tel</option>
+                </select>
+                <select name="Methods[bank_ids][]" multiple>
+                    <option value="51" selected>ОЗОН Банк</option>
+                </select>
+                <input name="Methods[auto_commission]" value="0.00">
+            </form>
+        HTML);
+
+        $result = $this->client($transport)->createMethod([
+            'name' => 'm2nozon',
+            'method_type' => 'tel',
+            'bank_ids' => '51',
+        ]);
+
+        $this->assertTrue($result['created']);
+        $this->assertSame(120, $result['method_id']);
+        $this->assertSame('tel', $result['method_type']);
+        $this->assertSame([['id' => '51', 'name' => 'ОЗОН Банк']], $result['banks']);
+        $this->assertSame(['51'], $transport->posts[0]['fields']['Methods[bank_ids][]']);
+        $this->assertArrayNotHasKey('Methods[bank_ids]', $transport->posts[0]['fields']);
+        $this->assertSame('2', $transport->posts[0]['fields']['Methods[method_type_id]']);
+        $this->assertSame('m2nozon', $transport->posts[0]['fields']['Methods[name]']);
+        $this->assertSame('/admin/methods/create', $transport->posts[0]['path']);
+    }
+
+    public function test_create_method_returns_an_existing_row_without_posting(): void
+    {
+        $transport = new FakeWork1Transport;
+        $transport->respond('/admin/methods/index', <<<'HTML'
+            <table><thead><tr><th>Methods</th></tr></thead>
+            <tr data-key="19"><td>m2alfa</td></tr>
+            </table>
+        HTML);
+        $transport->respond('/admin/methods/update', <<<'HTML'
+            <form>
+                <input name="Methods[name]" value="m2alfa">
+                <select name="Methods[method_type_id]"><option value="2" selected>tel</option></select>
+                <select name="Methods[bank_ids][]"><option value="27" selected>АЛЬФА-БАНК</option></select>
+            </form>
+        HTML);
+
+        $result = $this->client($transport)->createMethod([
+            'name' => 'm2alfa',
+            'method_type' => 'tel',
+            'bank_ids' => '27',
+        ]);
+
+        $this->assertFalse($result['created']);
+        $this->assertSame(19, $result['method_id']);
+        $this->assertSame([], $transport->posts);
+    }
+
     private function client(FakeWork1Transport $transport): Work1Client
     {
         return new Work1Client($transport, new FormParser);

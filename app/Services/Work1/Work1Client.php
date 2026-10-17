@@ -292,6 +292,100 @@ class Work1Client
     }
 
     /**
+     * @return array{page:int, methods:list<array{id:int, cells:array<int|string, string>}>}
+     */
+    public function listMethods(?string $name, int $page = 1): array
+    {
+        $query = [];
+        if ($name !== null && $name !== '') {
+            $query['MethodsSearch'] = ['name' => $name];
+        }
+        if ($page > 1) {
+            $query['page'] = $page;
+        }
+        $path = '/admin/methods/index';
+        if ($query !== []) {
+            $path .= '?'.http_build_query($query);
+        }
+        $listed = $this->guard($this->transport->get($path));
+        $methods = $this->parser->gridRows($listed->body);
+        $this->log('info', 'listMethods', 'read', ['name' => $name, 'page' => $page, 'count' => count($methods)]);
+
+        return ['page' => $page, 'methods' => $methods];
+    }
+
+    /**
+     * @return array{method_id:int, name:?string, method_type_id:?string, method_type:?string, banks:list<array{id:string, name:string}>, fields:array<string, string>}
+     */
+    public function getMethod(int $id): array
+    {
+        $page = $this->guard($this->transport->get('/admin/methods/update?id='.$id));
+        $method = $this->readMethod($id, $page->body);
+        $this->log('info', 'getMethod', 'read', [
+            'method_id' => $id,
+            'name' => $method['name'],
+            'banks' => count($method['banks']),
+        ]);
+
+        return $method;
+    }
+
+    /**
+     * @param  array<string, string>  $values
+     * @return array{method_id:int, name:?string, method_type_id:?string, method_type:?string, banks:list<array{id:string, name:string}>, fields:array<string, string>, created:bool}
+     */
+    public function createMethod(array $values): array
+    {
+        $name = trim($values['name'] ?? '');
+        if ($name === '') {
+            throw new Work1Exception('У метода кабинета нет имени');
+        }
+        $existing = $this->findMethod($name);
+        if ($existing !== null) {
+            $method = $this->getMethod($existing);
+            $method['created'] = false;
+            $this->log('info', 'createMethod', 'already exists', ['method_id' => $existing, 'name' => $name]);
+
+            return $method;
+        }
+
+        $this->log('info', 'createMethod', 'read create form', ['name' => $name, 'keys' => array_keys($values)]);
+        $page = $this->guard($this->transport->get('/admin/methods/create'));
+        $fields = $this->methodFields($page->body, $values, []);
+        $posted = $this->guard($this->transport->post('/admin/methods/create', $fields));
+        $id = $this->parser->offerIdFromLocation($posted->location) ?? $this->findMethod($name);
+        if ($id === null) {
+            throw new Work1Exception($this->parser->alert($posted->body) ?? 'work1 не вернул id метода');
+        }
+        $this->log('info', 'createMethod', 'created', ['method_id' => $id, 'name' => $name]);
+        $method = $this->getMethod($id);
+        $method['created'] = true;
+
+        return $method;
+    }
+
+    /**
+     * @param  array<string, string>  $values
+     * @return array{method_id:int, name:?string, method_type_id:?string, method_type:?string, banks:list<array{id:string, name:string}>, fields:array<string, string>}
+     */
+    public function updateMethod(int $id, array $values): array
+    {
+        $path = '/admin/methods/update?id='.$id;
+        $this->log('info', 'updateMethod', 'read update form', ['method_id' => $id, 'keys' => array_keys($values)]);
+        $page = $this->guard($this->transport->get($path));
+        $selected = [];
+        foreach ($this->parser->selectOptions($page->body, 'Methods[bank_ids][]') as $option) {
+            if ($option['selected'] && $option['value'] !== '') {
+                $selected[] = $option['value'];
+            }
+        }
+        $fields = $this->methodFields($page->body, $values, $selected);
+        $this->guard($this->transport->post($path, $fields));
+
+        return $this->getMethod($id);
+    }
+
+    /**
      * @return array{user_id:?int, page:int, requisites:list<array{id:int, cells:array<int|string, string>}>}
      */
     public function listRequisites(?int $userId, int $page = 1): array
@@ -419,6 +513,109 @@ class Work1Client
         } catch (\Throwable) {
             // Unit tests build the client without the framework log binding.
         }
+    }
+
+    /**
+     * @param  array<string, string>  $values
+     * @param  list<string>  $keepBanks
+     * @return array<string, scalar|list<string>|null>
+     */
+    private function methodFields(string $html, array $values, array $keepBanks): array
+    {
+        $fields = $this->parser->fields($html);
+        unset($fields['Methods[bank_ids]'], $fields['Methods[bank_ids][]']);
+        $banks = array_key_exists('bank_ids', $values) ? $this->bankIds($values['bank_ids']) : $keepBanks;
+        if ($banks !== []) {
+            $fields['Methods[bank_ids][]'] = $banks;
+        }
+
+        $type = $values['method_type_id'] ?? $values['method_type'] ?? null;
+        unset($values['bank_ids'], $values['method_type'], $values['method_type_id']);
+        if (is_string($type) && $type !== '') {
+            $values['method_type_id'] = $this->resolveMethodType($html, $type);
+        }
+
+        return $this->parser->applyValues($fields, $values);
+    }
+
+    /**
+     * @return array{method_id:int, name:?string, method_type_id:?string, method_type:?string, banks:list<array{id:string, name:string}>, fields:array<string, string>}
+     */
+    private function readMethod(int $id, string $html): array
+    {
+        $fields = $this->parser->publicFields($this->parser->fields($html));
+        unset($fields['Methods[bank_ids]'], $fields['Methods[bank_ids][]']);
+        $banks = [];
+        $typeId = null;
+        $type = null;
+        foreach ($this->parser->selectOptions($html, 'Methods[bank_ids][]') as $option) {
+            if ($option['selected'] && $option['value'] !== '') {
+                $banks[] = ['id' => $option['value'], 'name' => $option['label']];
+            }
+        }
+        foreach ($this->parser->selectOptions($html, 'Methods[method_type_id]') as $option) {
+            if ($option['selected']) {
+                $typeId = $option['value'] !== '' ? $option['value'] : null;
+                $type = $option['label'] !== '' ? $option['label'] : null;
+            }
+        }
+
+        return [
+            'method_id' => $id,
+            'name' => $this->stringOrNull($fields['Methods[name]'] ?? null),
+            'method_type_id' => $typeId,
+            'method_type' => $type,
+            'banks' => $banks,
+            'fields' => $fields,
+        ];
+    }
+
+    private function resolveMethodType(string $html, string $given): string
+    {
+        if (preg_match('/^\d+$/', $given) === 1) {
+            return $given;
+        }
+        foreach ($this->parser->selectOptions($html, 'Methods[method_type_id]') as $option) {
+            if ($option['value'] !== '' && strcasecmp($option['label'], $given) === 0) {
+                return $option['value'];
+            }
+        }
+
+        throw new Work1Exception('В кабинете нет типа метода '.$given);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function bankIds(string $raw): array
+    {
+        $raw = trim($raw);
+        if ($raw === '') {
+            return [];
+        }
+        $ids = [];
+        foreach (preg_split('/\s*,\s*/', $raw) ?: [] as $part) {
+            if (preg_match('/^\d+$/', $part) !== 1) {
+                throw new Work1Exception('bank_ids — это id банков через запятую');
+            }
+            $ids[] = $part;
+        }
+
+        return $ids;
+    }
+
+    private function findMethod(string $name): ?int
+    {
+        $query = http_build_query(['MethodsSearch' => ['name' => $name]]);
+        $page = $this->guard($this->transport->get('/admin/methods/index?'.$query));
+        foreach ($this->parser->gridRows($page->body) as $row) {
+            $label = $row['cells']['Methods'] ?? null;
+            if ($label === $name) {
+                return $row['id'];
+            }
+        }
+
+        return null;
     }
 
     /**

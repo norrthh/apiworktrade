@@ -47,6 +47,20 @@ class FormParserTest extends TestCase
         ], $rows[0]);
     }
 
+    public function test_index_row_reads_a_method_other_than_humo(): void
+    {
+        $html = <<<'HTML'
+            <table><tr data-key="411">
+                <td>M_3RRVXQT1</td><td>EHOT</td><td>m2alfa</td><td>superadmin</td>
+            </tr></table>
+        HTML;
+
+        $rows = (new FormParser)->indexRows($html);
+
+        $this->assertSame('m2alfa', $rows[0]['method']);
+        $this->assertSame('superadmin', $rows[0]['agent']);
+    }
+
     public function test_trader_row_and_user_toggle(): void
     {
         $html = <<<'HTML'
@@ -119,5 +133,55 @@ class FormParserTest extends TestCase
         HTML;
 
         $this->assertSame('/admin/requisite/open-form', (new FormParser)->requisiteCreatePath($html));
+    }
+
+    public function test_cabinet_cards_keep_a_phone_and_mask_a_pan(): void
+    {
+        $html = <<<'HTML'
+            <div class="deal_div" data-id="7926">
+                <ul>
+                    <li><span>Номер телефона</span><p>+79887034414</p></li>
+                    <li><span>Наименование банка</span><p>Мегафон</p></li>
+                    <li><span>Получатель</span><p>Andrei</p></li>
+                    <li><span>Название устройства</span><p>anton</p></li>
+                    <li><span>Оборот за день</span><p class="hover-toggle"><span class="default">0.00 ₽</span><span class="hover">0.00 ₮</span></p></li>
+                </ul>
+                <span class="automation-status automation-status--active"></span>
+            </div>
+            <div class="deal_div archive" data-id="10">
+                <ul>
+                    <li><span>Номер Карты</span><p>4578 8912 3456 7890</p></li>
+                    <li><span>Наименование банка</span><p>Инекобанк</p></li>
+                    <li><span>Получатель</span><p>Aram</p></li>
+                </ul>
+            </div>
+            <div class="deal_div deal_div_add"><span>Добавить реквизит</span></div>
+        HTML;
+
+        $cards = (new FormParser)->cabinetCards($html);
+
+        $this->assertCount(2, $cards);
+        $this->assertTrue($cards[0]['active']);
+        $this->assertTrue($cards[0]['automated']);
+        $this->assertSame('+79887034414', $cards[0]['number']);
+        $this->assertSame('Номер телефона', $cards[0]['number_label']);
+        $this->assertSame('Мегафон', $cards[0]['bank']);
+        $this->assertSame('0.00 ₽', $cards[0]['turnover_day']);
+        $this->assertFalse($cards[1]['active']);
+        $this->assertSame('7890', $cards[1]['number']);
+    }
+
+    public function test_html_fragment_unwraps_a_json_string(): void
+    {
+        $html = '<form><input name="RequisitesForm[recipient]" value="Andrei"></form>';
+
+        $this->assertSame($html, (new FormParser)->htmlFragment(json_encode($html)));
+    }
+
+    public function test_csrf_reads_the_trader_token(): void
+    {
+        $html = '<input type="hidden" name="_csrf-frontend" value="front">';
+
+        $this->assertSame('front', (new FormParser)->csrf($html));
     }
 }

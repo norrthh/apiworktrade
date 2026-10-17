@@ -14,7 +14,7 @@ class OfferController extends Controller
         $data = $request->validate([
             'merchant_code' => ['required', 'string', 'max:64'],
             'merchant_name' => ['required', 'string', 'max:255'],
-            'method' => ['required', 'in:humo,uzcard'],
+            'method' => ['required', 'string', 'regex:/^[a-z][a-z0-9_]{1,40}$/'],
         ]);
 
         return response()->json($work1->createOffer(

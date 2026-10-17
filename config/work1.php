@@ -9,4 +9,7 @@ return [
     'cookie_jar' => storage_path('app/work1-cookies.json'),
     'admin_id' => (int) env('WORK1_ADMIN_ID', 1),
     'trader_user_id' => (int) env('WORK1_TRADER_USER_ID', 1),
+    'trader_email' => env('WORK1_TRADER_EMAIL', 'tester@test.com'),
+    'trader_password' => env('WORK1_TRADER_PASSWORD', ''),
+    'trader_cookie_jar' => env('WORK1_TRADER_COOKIE_JAR', storage_path('app/work1-trader-cookies.json')),
 ];

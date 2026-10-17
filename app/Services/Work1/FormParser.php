@@ -50,8 +50,10 @@ final class FormParser
     public function csrf(string $html): ?string
     {
         $fields = $this->fields($html);
-        if (($fields['_csrf-backend'] ?? '') !== '') {
-            return $fields['_csrf-backend'];
+        foreach (['_csrf-backend', '_csrf-frontend'] as $name) {
+            if (($fields[$name] ?? '') !== '') {
+                return $fields[$name];
+            }
         }
 
         if (preg_match('/name="csrf-token" content="([^"]+)"/', $html, $match) === 1) {
@@ -109,8 +111,8 @@ final class FormParser
                 if ($code === null && preg_match('/^M_[A-Z0-9]+$/', $cell) === 1) {
                     $code = $cell;
                 }
-                if ($method === null && in_array(strtolower($cell), ['humo', 'uzcard'], true)) {
-                    $method = strtolower($cell);
+                if ($method === null && $this->isMethodSlug($cell)) {
+                    $method = $cell;
                 }
             }
             if ($code === null && preg_match('/\b(M_[A-Z0-9]+)\b/', $text, $match) === 1) {
@@ -126,6 +128,15 @@ final class FormParser
         }
 
         return $rows;
+    }
+
+    private function isMethodSlug(string $cell): bool
+    {
+        if (preg_match('/^[a-z][a-z0-9_]{1,40}$/', $cell) !== 1) {
+            return false;
+        }
+
+        return ! in_array($cell, ['superadmin'], true);
     }
 
     /**
@@ -260,13 +271,197 @@ final class FormParser
     {
         $public = [];
         foreach ($fields as $name => $value) {
-            if ($name === '_csrf-backend' || str_contains(strtolower($name), 'password')) {
+            if (in_array($name, ['_csrf-backend', '_csrf-frontend'], true) || str_contains(strtolower($name), 'password')) {
                 continue;
             }
             $public[$name] = $this->mask($value);
         }
 
         return $public;
+    }
+
+    /**
+     * Карточки со страницы /cabinet/cards. Класс archive на самой карточке — выключенный реквизит.
+     *
+     * @return list<array{id:int, active:bool, automated:bool, number:?string, number_label:?string, bank:?string, recipient:?string, device:?string, turnover_day:?string, turnover_total:?string, counteragents_day:?string, counteragents_month:?string}>
+     */
+    public function cabinetCards(string $html): array
+    {
+        $cards = [];
+        $query = '//div[contains(concat(" ", normalize-space(@class), " "), " deal_div ") and @data-id]';
+        foreach ($this->elements($html, $query) as $card) {
+            if (str_contains(' '.$card->getAttribute('class').' ', ' deal_div_add ')) {
+                continue;
+            }
+
+            $pairs = [];
+            foreach ($this->xpath($card)->query('.//li[span]', $card) ?: [] as $item) {
+                if (! $item instanceof DOMElement) {
+                    continue;
+                }
+                $labelNode = $this->xpath($item)->query('./span', $item)->item(0);
+                if (! $labelNode instanceof DOMNode) {
+                    continue;
+                }
+                $label = $this->plainText($labelNode);
+                if ($label === '') {
+                    continue;
+                }
+                $valueNode = $this->xpath($item)->query('.//span[contains(concat(" ", normalize-space(@class), " "), " default ")]', $item)->item(0);
+                if (! $valueNode instanceof DOMNode) {
+                    $valueNode = $this->xpath($item)->query('./p', $item)->item(0);
+                }
+                $pairs[$label] = $valueNode instanceof DOMNode ? $this->mask($this->plainText($valueNode)) : '';
+            }
+
+            $numberLabel = null;
+            $number = null;
+            foreach ($pairs as $label => $value) {
+                if (! array_key_exists($label, $this->cabinetLabels())) {
+                    $numberLabel = $label;
+                    $number = $value;
+                    break;
+                }
+            }
+
+            $automated = $this->xpath($card)->query('.//*[contains(@class,"automation-status--active")]', $card);
+
+            $cards[] = [
+                'id' => (int) $card->getAttribute('data-id'),
+                'active' => preg_match('/(?:^|\s)archive(?:\s|$)/', $card->getAttribute('class')) !== 1,
+                'automated' => $automated !== false && $automated->length > 0,
+                'number' => $number,
+                'number_label' => $numberLabel,
+                'bank' => $pairs['Наименование банка'] ?? null,
+                'recipient' => $pairs['Получатель'] ?? null,
+                'device' => $pairs['Название устройства'] ?? null,
+                'turnover_day' => $pairs['Оборот за день'] ?? null,
+                'turnover_total' => $pairs['Оборот за все время'] ?? null,
+                'counteragents_day' => $pairs['Количество контрагенов в день'] ?? null,
+                'counteragents_month' => $pairs['Количество контрагенов в месяц'] ?? null,
+            ];
+        }
+
+        return $cards;
+    }
+
+    public function htmlFragment(string $body): string
+    {
+        $trim = ltrim($body);
+        if ($trim === '' || ($trim[0] !== '"' && $trim[0] !== '{')) {
+            return $body;
+        }
+
+        $decoded = json_decode($body, true);
+        if (is_string($decoded)) {
+            return $decoded;
+        }
+        if (is_array($decoded)) {
+            foreach (['html', 'content', 'form'] as $key) {
+                if (is_string($decoded[$key] ?? null)) {
+                    return $decoded[$key];
+                }
+            }
+        }
+
+        return $body;
+    }
+
+    /**
+     * @return array{path:string, fields:array<string, string>}|null
+     */
+    public function formContaining(string $html, string $marker): ?array
+    {
+        foreach ($this->elements($html, '//form') as $form) {
+            $inner = $form->ownerDocument?->saveHTML($form) ?? '';
+            if (! str_contains($inner, $marker)) {
+                continue;
+            }
+            $action = $form->getAttribute('action');
+
+            return [
+                'path' => $this->normalizePath($action !== '' ? $action : '/cabinet/cards'),
+                'fields' => $this->fields($inner),
+            ];
+        }
+
+        return null;
+    }
+
+    public function jsonAssignment(string $html, string $variable): mixed
+    {
+        $pos = strpos($html, $variable);
+        if ($pos === false) {
+            return null;
+        }
+        $start = strpos($html, '[', $pos);
+        if ($start === false) {
+            return null;
+        }
+
+        $depth = 0;
+        $inString = false;
+        $escape = false;
+        $length = strlen($html);
+        for ($i = $start; $i < $length; $i++) {
+            $char = $html[$i];
+            if ($inString) {
+                if ($escape) {
+                    $escape = false;
+
+                    continue;
+                }
+                if ($char === '\\') {
+                    $escape = true;
+
+                    continue;
+                }
+                if ($char === '"') {
+                    $inString = false;
+                }
+
+                continue;
+            }
+            if ($char === '"') {
+                $inString = true;
+
+                continue;
+            }
+            if ($char === '[') {
+                $depth++;
+            }
+            if ($char === ']') {
+                $depth--;
+                if ($depth === 0) {
+                    $decoded = json_decode(substr($html, $start, $i - $start + 1), true);
+
+                    return json_last_error() === JSON_ERROR_NONE ? $decoded : null;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function cabinetLabels(): array
+    {
+        return [
+            'Наименование банка' => 'bank',
+            'Получатель' => 'recipient',
+            'Название устройства' => 'device',
+            'Оборот за день' => 'turnover_day',
+            'Оборот за все время' => 'turnover_total',
+            'Количество контрагенов в день' => 'counteragents_day',
+            'Количество контрагенов в месяц' => 'counteragents_month',
+        ];
+    }
+
+    private function plainText(DOMNode $node): string
+    {
+        return trim(preg_replace('/\s+/u', ' ', $node->textContent ?? '') ?? '');
     }
 
     public function requisiteCreatePath(string $html): ?string
@@ -321,6 +516,24 @@ final class FormParser
         }
 
         return null;
+    }
+
+    /**
+     * @return list<array{value:string, label:string, selected:bool}>
+     */
+    public function selectOptions(string $html, string $name): array
+    {
+        $options = [];
+        $query = '//select[@name="'.$name.'"]/option';
+        foreach ($this->elements($html, $query) as $option) {
+            $options[] = [
+                'value' => $option->getAttribute('value'),
+                'label' => trim(preg_replace('/\s+/u', ' ', $option->textContent ?? '') ?? ''),
+                'selected' => $option->hasAttribute('selected'),
+            ];
+        }
+
+        return $options;
     }
 
     public function jsonOrRaw(?string $value): mixed
@@ -459,7 +672,7 @@ final class FormParser
 
         $available = [];
         foreach (array_keys($fields) as $name) {
-            if ($name === '_csrf-backend') {
+            if (in_array($name, ['_csrf-backend', '_csrf-frontend'], true)) {
                 continue;
             }
             $available[] = preg_match('/\[([^\]]+)\]$/', $name, $suffix) === 1 ? $suffix[1] : $name;

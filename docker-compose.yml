@@ -1,0 +1,14 @@
+services:
+  app:
+    build: .
+    image: work1-api
+    container_name: work1-api
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:8010:8000"
+    volumes:
+      - work1_api_storage:/var/www/html/storage
+
+volumes:
+  work1_api_storage:

@@ -55,11 +55,33 @@ final class QrMasterTestPayouts
                 return 'unavailable';
             }
             $row = $rows->item(0);
-            if ($row->getAttribute('data-type') !== 'import' || $row->getAttribute('data-status') !== $snapshot['status']) {
-                return 'unknown';
-            }
-            if ($action === 'complete' && (int) $row->getAttribute('data-user') !== $traderId) {
+            $rowStatus = $row->getAttribute('data-status');
+            $rowType = $row->getAttribute('data-type');
+            $rowUser = (int) $row->getAttribute('data-user');
+            if ($rowUser !== 0 && $rowUser !== $traderId) {
                 return 'assigned_elsewhere';
+            }
+            if ($action === 'claim' && $rowUser === $traderId && in_array($rowStatus, ['2', '5'], true)) {
+                return 'assigned';
+            }
+            if ($action === 'complete' && $rowUser !== $traderId) {
+                return 'assigned_elsewhere';
+            }
+            $matchesSnapshot = $rowType === 'import' && $rowStatus === $snapshot['status'];
+            $terminal = in_array($rowStatus, ['3', '4', '5', '6'], true);
+            $claimable = $action === 'claim' && $snapshot['status'] === '1' && $rowType === 'import' && $rowUser === 0 && ! $terminal;
+            if (! $matchesSnapshot) {
+                Log::warning('[QrMasterTestPayouts.sync] cabinet row does not match the admin snapshot', [
+                    'trader_id' => $traderId,
+                    'deal_id' => $snapshot['deal_id'],
+                    'snapshot_status' => $snapshot['status'],
+                    'row_status' => $rowStatus,
+                    'row_type' => $rowType,
+                    'row_user' => $rowUser,
+                ]);
+            }
+            if (! $matchesSnapshot && ! $claimable) {
+                return $terminal ? 'terminal' : 'unknown';
             }
             Cache::forever($intentKey, ['trader_id' => $traderId, 'provider_id' => $providerId, 'created_at' => now()->toIso8601String()]);
             $response = $this->transport->post('/cabinet/post', [

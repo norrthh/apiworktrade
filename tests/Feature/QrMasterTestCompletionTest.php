@@ -84,6 +84,35 @@ class QrMasterTestCompletionTest extends TestCase
         $this->assertSame(0, $this->transport->writes);
     }
 
+    public function test_claims_when_the_cabinet_status_is_not_pending_but_the_deal_is_free(): void
+    {
+        $logged = [];
+        Event::listen(MessageLogged::class, function (MessageLogged $event) use (&$logged): void {
+            $logged[] = $event;
+        });
+        $this->transport->cabinetStatus = '0';
+
+        $this->withToken('test-bridge-token')->postJson('/api/qrmaster/test/payout', $this->payload())
+            ->assertOk()->assertJsonPath('result', 'assigned');
+
+        $this->assertSame(1, $this->transport->writes);
+        $warning = collect($logged)->first(fn (MessageLogged $event): bool => $event->message === '[QrMasterTestPayouts.sync] cabinet row does not match the admin snapshot');
+        $this->assertNotNull($warning);
+        $this->assertSame('0', $warning->context['row_status']);
+        $this->assertSame('1', $warning->context['snapshot_status']);
+        $this->assertStringNotContainsString('qr.nspk.ru', (string) json_encode($warning->context));
+    }
+
+    public function test_does_not_claim_a_canceled_cabinet_row(): void
+    {
+        $this->transport->cabinetStatus = '6';
+
+        $this->withToken('test-bridge-token')->postJson('/api/qrmaster/test/payout', $this->payload())
+            ->assertOk()->assertJsonPath('result', 'terminal');
+
+        $this->assertSame(0, $this->transport->writes);
+    }
+
     public function test_logs_trader_login_refusal_without_secrets(): void
     {
         $logged = [];
@@ -194,6 +223,8 @@ final class FakeQrMasterTransport implements Work1Transport
 {
     public string $status = '1';
 
+    public ?string $cabinetStatus = null;
+
     public int $traderId = 0;
 
     public int $writes = 0;
@@ -248,7 +279,9 @@ final class FakeQrMasterTransport implements Work1Transport
         if (str_starts_with($path, '/cabinet/payout?')) {
             $loggedIn = $this->mismatch === 'session' ? 28 : 1;
 
-            return new Work1Response(200, '<a>test (ID: '.$loggedIn.')</a><table><tr data-id="123" data-user="'.$this->traderId.'" data-status="'.$this->status.'" data-type="import"></tr></table>');
+            $cabinetStatus = $this->cabinetStatus ?? $this->status;
+
+            return new Work1Response(200, '<a>test (ID: '.$loggedIn.')</a><table><tr data-id="123" data-user="'.$this->traderId.'" data-status="'.$cabinetStatus.'" data-type="import"></tr></table>');
         }
         throw new \RuntimeException('Unexpected GET '.$path);
     }

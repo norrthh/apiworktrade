@@ -4,6 +4,8 @@ use App\Http\Controllers\Api\BankController;
 use App\Http\Controllers\Api\CabinetController;
 use App\Http\Controllers\Api\MethodController;
 use App\Http\Controllers\Api\OfferController;
+use App\Http\Controllers\Api\QrMasterTestCompletionController;
+use App\Http\Controllers\Api\QrMasterTraderLookupController;
 use App\Http\Controllers\Api\RequisiteController;
 use App\Http\Controllers\Api\SessionController;
 use Illuminate\Support\Facades\Route;
@@ -48,3 +50,7 @@ Route::middleware('work1.token')->group(function () {
     Route::match(['put', 'patch'], '/requisites/{id}', [RequisiteController::class, 'update'])->whereNumber('id');
     Route::post('/requisites/{id}/unarchive', [RequisiteController::class, 'unarchive'])->whereNumber('id');
 });
+
+Route::post('/highhelp/payout', \App\Http\Controllers\Api\HighHelpPayoutController::class)->middleware('throttle:60,1');
+Route::post('/qrmaster/{mode}/payout', QrMasterTestCompletionController::class)->whereIn('mode', ['test', 'live'])->middleware('throttle:60,1');
+Route::get('/qrmaster/test/traders', QrMasterTraderLookupController::class)->middleware('throttle:60,1');

@@ -46,7 +46,7 @@ final class QrMasterTestPayouts
             }
             $this->loginAsTrader($traderId);
             $page = $this->transport->get('/cabinet/payout?'.http_build_query(['filter_id' => $paymentId]));
-            if ($page->status !== 200 || ! preg_match('/\(ID:\s*'.preg_quote((string) $traderId, '/').'\)/', strip_tags($page->body))) {
+            if ($page->status !== 200 || ! preg_match('/\bID:\s*'.preg_quote((string) $traderId, '/').'(?!\d)/', strip_tags($page->body))) {
                 throw new Work1Exception('QRMASTER_TRADER_SESSION_MISMATCH');
             }
             $xpath = $this->xpath($page->body);
